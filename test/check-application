@@ -1,52 +1,52 @@
 #!/usr/bin/python3 -cimport os, sys; os.execv(os.path.dirname(sys.argv[1]) + "/common/pywrap", sys.argv)
 
-# Run this with --help to see available options for tracing and debugging
+# NOT YET RUN: needs /dev/kvm and a Cockpit test image (TEST_OS). The dev
+# container (README.md) is the tested path for now. Kea itself doesn't need
+# to be installed: the test writes a config and a lease file for the page.
+#
 # See https://github.com/cockpit-project/cockpit/blob/main/test/common/testlib.py
 # "class Browser" and "class MachineCase" for the available API.
+
+import time
 
 import testlib
 
 
-# Nondestructive tests all run in the same running VM. This allows them to run in Packit, Fedora, and
-# RHEL dist-git gating. They must not permanently change any file or configuration on the system in a
-# way that influences other tests.
 @testlib.nondestructive
-class TestApplication(testlib.MachineCase):
+class TestKea(testlib.MachineCase):
     def testBasic(self):
         b = self.browser
         m = self.machine
 
-        self.login_and_go("/starter-kit")
-        # verify expected heading
-        b.wait_text(".pf-v6-c-card__title", "Starter Kit")
+        if m.execute("test -d /etc/kea && echo yes || true").strip() != "yes":
+            m.execute("mkdir /etc/kea")
+            self.addCleanup(m.execute, "rm -rf /etc/kea")
+        self.write_file("/etc/kea/kea-dhcp4.conf", """
+// a comment, as Kea allows
+{ "Dhcp4": {
+    "lease-database": { "type": "memfile", "name": "/var/tmp/cktest-leases4.csv" },
+    "subnet4": [ { "id": 1, "subnet": "192.0.2.0/24",
+        "reservations": [ { "hw-address": "02:00:00:00:00:01", "ip-address": "192.0.2.10",
+                            "comment": "Test reservation" } ] } ]
+} }
+""")
+        expire = int(time.time()) + 3600
+        self.write_file("/var/tmp/cktest-leases4.csv",
+                        "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,"
+                        "hostname,state,user_context,pool_id\n"
+                        f"192.0.2.10,02:00:00:00:00:01,,3600,{expire},1,0,0,cktest-host,0,,0\n")
+        self.addCleanup(m.execute, "rm -f /var/tmp/cktest-leases4.csv*")
 
-        # verify expected host name
-        hostname = m.execute("cat /etc/hostname").strip()
-        b.wait_in_text(".pf-v6-c-alert__title", "Running on " + hostname)
+        self.login_and_go("/kea")
+        row = "#kea-leases tr[data-row-id='4/0/192.0.2.10/']"
+        b.wait_in_text(row, "02:00:00:00:00:01")
+        b.wait_in_text(row, "cktest-host")
+        b.wait_in_text(row, "Test reservation")
 
-        # change current hostname
-        self.write_file("/etc/hostname", "new-" + hostname)
-        # verify new hostname name
-        b.wait_in_text(".pf-v6-c-alert__title", "Running on new-" + hostname)
-
-        # change language to German
-        b.switch_to_top()
-        # the menu and dialog changed several times
-        b.click("#toggle-menu")
-        b.click("button.display-language-menu")
-        b.wait_popup('display-language-modal')
-        b.click("#display-language-modal [data-value='de-de'] button")
-        b.click("#display-language-modal button.pf-m-primary")
-        b.wait_visible("#content")
-        # menu label (from manifest) should be translated
-        b.wait_text("#host-apps a[href='/starter-kit']", "Bausatz")
-        # window title should be translated; this is not considered as "visible"
-        self.assertIn("Bausatz", b.call_js_func("ph_text", "head title"))
-
-        b.go("/starter-kit")
-        b.enter_page("/starter-kit")
-        # page label (from js) should be translated
-        b.wait_in_text(".pf-v6-c-alert__title", "Läuft auf")
+        # Kea appends a row on renewal; the page follows the file
+        m.execute(f"echo '192.0.2.10,02:00:00:00:00:01,,3600,{expire},1,0,0,renamed-host,0,,0' "
+                  ">> /var/tmp/cktest-leases4.csv")
+        b.wait_in_text(row, "renamed-host")
 
 
 if __name__ == '__main__':

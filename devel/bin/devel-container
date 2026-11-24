@@ -1,0 +1,47 @@
+#!/bin/sh
+# Run the development container: Debian + ISC Kea + Cockpit, with this
+# checkout's dist/ installed as the "kea" Cockpit package.
+#
+#   devel/bin/devel-container [start|stop|shell|logs]
+#
+# Env: DEVEL_PORT (default 9092), DEVEL_IMAGE, DEVEL_NAME, DEVEL_BASE
+set -eu
+
+cd "$(dirname "$0")/../.."
+PORT="${DEVEL_PORT:-9092}"
+IMAGE="${DEVEL_IMAGE:-localhost/cockpit-kea-devel}"
+NAME="${DEVEL_NAME:-cockpit-kea-devel}"
+BASE="${DEVEL_BASE:-docker.io/library/debian:trixie}"
+
+case "${1:-start}" in
+    build)
+        podman build --build-arg BASE="$BASE" -t "$IMAGE" devel/
+        ;;
+    start)
+        [ -d dist ] || { echo "dist/ missing: run 'make' first" >&2; exit 1; }
+        podman image exists "$IMAGE" || "$0" build
+        podman rm -f "$NAME" >/dev/null 2>&1 || true
+        # --privileged is needed for systemd and for creating the fake LAN;
+        # rootless, it is still confined to your own user namespace.
+        podman run -d --name "$NAME" --hostname kea-devel --privileged \
+            -p "127.0.0.1:${PORT}:9090" \
+            -v "$PWD:/src:ro,z" \
+            "$IMAGE" >/dev/null
+        # Mount the checkout, not dist/: every build deletes and recreates
+        # dist/, which would leave a dist/ bind mount pointing at nothing.
+        podman exec "$NAME" sh -c "mkdir -p /usr/local/share/cockpit && ln -sfn /src/dist /usr/local/share/cockpit/kea"
+        echo "Cockpit: http://127.0.0.1:${PORT}/kea   (login admin / admin)"
+        ;;
+    stop)
+        podman rm -f "$NAME"
+        ;;
+    shell)
+        exec podman exec -it "$NAME" /bin/bash
+        ;;
+    logs)
+        exec podman exec -it "$NAME" journalctl -f -u kea-dhcp4-server -u kea-dhcp6-server -u fake-clients
+        ;;
+    *)
+        echo "usage: $0 [build|start|stop|shell|logs]" >&2; exit 2
+        ;;
+esac

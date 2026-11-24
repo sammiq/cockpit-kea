@@ -1,192 +1,150 @@
-# Cockpit Starter Kit
+# cockpit-kea
 
-Scaffolding for a [Cockpit](https://cockpit-project.org/) module.
+A [Cockpit](https://cockpit-project.org/) page for hosts running the
+[ISC Kea](https://www.isc.org/kea/) DHCP server. It shows:
 
-# Development dependencies
+* **Leases**: DHCPv4 and DHCPv6 leases in one table, with IP address (or
+  delegated prefix), MAC address, hostname, description, lease start and
+  lease end. Sortable and filterable. Current leases are shown by default.
+  "Show expired" adds expired, reclaimed, released and declined ones.
+* **A page per lease**: click an address to open `#/<address>`
+  (`#/prefix/<prefix>/<length>` for a delegated prefix), with a breadcrumb
+  back. It shows the lease's state, hostname, description, MAC address,
+  DUID or client ID, start and end times, lifetime, subnet and user context.
+  It also shows the host reservation it matches and the client's other
+  leases, e.g. a host's DHCPv4 lease, DHCPv6 lease and delegated prefix
+  together. "View logs" opens the Logs page searching for the client's MAC
+  address or DUID.
+* **Kea logs**: the latest journal entries of the Kea services, with a
+  "View all logs" button that opens Cockpit's Logs page filtered to them.
 
-On Debian/Ubuntu:
+It is **read-only**. It appears in the menu as "DHCP server" on hosts with
+`/etc/kea`.
 
-    sudo apt install gettext nodejs npm make
+## How it works
 
-On Fedora:
+| What | Source |
+|------|--------|
+| Leases | Kea's memfile lease files: `<file>.2`, `<file>.1` and `<file>`, replayed in that order as Kea does on startup. The last row for an address wins, and `valid_lifetime` 0 means deleted. The files are watched, so the table updates as Kea writes |
+| Lease file location | `lease-database.name` in `/etc/kea/kea-dhcp4.conf` / `kea-dhcp6.conf`, defaulting to `/var/lib/kea/kea-leases4.csv` / `kea-leases6.csv` |
+| Description | The lease's user context (`comment` or `description`), otherwise the matching host reservation's `comment` or `user-context` `description`/`comment`. A reservation matches by IP address, then by MAC address, DUID or client ID |
+| Hostname | The lease's hostname. If the client sent none, the reservation's hostname or the hostname of another lease with the same MAC address is shown greyed out (DHCPv6 clients often send no name) |
+| Lease start | `expire - valid_lifetime`. That's the last renewal, which is what Kea records |
+| Logs | journal of `kea-dhcp4-server`, `kea-dhcp6-server`, `kea-dhcp-ddns-server` and `kea-ctrl-agent` (Debian's unit names), plus the `isc-kea-*` units of ISC's own packages |
 
-    sudo dnf install gettext nodejs npm make
+On Debian, `/etc/kea` and `/var/lib/kea` are only readable by `_kea` (mode
+0750), so the leases need **administrative access**. With limited access
+the page shows a button to turn it on. The logs only need journal access
+(the `adm` group).
 
-On openSUSE Tumbleweed and Leap:
+Limits:
 
-    sudo zypper in gettext-runtime nodejs npm make
+* Only the memfile backend. With a MySQL/PostgreSQL lease database the page
+  says so and shows no leases.
+* Reservations come from the config files only, not from a hosts database
+  (`host_cmds`). Files pulled in with `<?include?>` are not read.
 
-# Getting and building the source
+Code: `src/kea.ts` (CSV and config parsing, no Cockpit dependencies),
+`src/model.ts` (file watching), `src/app.tsx` (routing, overview and logs),
+`src/leases-card.tsx` (the leases table), `src/lease-page.tsx` (one lease)
+and `src/lease-utils.tsx` (shared formatting, page paths, log units). Developed against Debian Trixie (Kea 2.6.3,
+Cockpit 337).
 
-These commands check out the source and build it into the `dist/` directory:
+# Development
 
-```
-git clone https://github.com/cockpit-project/starter-kit.git
-cd starter-kit
-make
-```
+Dependencies (Fedora: `sudo dnf install gettext nodejs npm make podman`):
 
-# Installing
+    make                   # fetch pkg/lib from Cockpit, npm install, build dist/
 
-`make install` compiles and installs the package in `/usr/local/share/cockpit/`. The
-convenience targets `srpm` and `rpm` build the source and binary rpms,
-respectively. Both of these make use of the `dist` target, which is used
-to generate the distribution tarball. In `production` mode, source files are
-automatically minified and compressed. Set `NODE_ENV=production` if you want to
-duplicate this behavior.
+## Dev container (recommended)
 
-For development, you usually want to run your module straight out of the git
-tree. To do that, run `make devel-install`, which links your checkout to the
-location were cockpit-bridge looks for packages. If you prefer to do
-this manually:
+A rootless podman container running Debian Trixie with Kea DHCPv4/DHCPv6
+and Cockpit:
 
-```
-mkdir -p ~/.local/share/cockpit
-ln -s `pwd`/dist ~/.local/share/cockpit/starter-kit
-```
+    make devel-container   # build image on first run, then start it
+    make watch             # rebuild dist/ on every change
 
-After changing the code and running `make` again, reload the Cockpit page in
-your browser.
+Open <http://127.0.0.1:9092/kea> and log in as `admin` / `admin`. Click
+"Limited access" (top right) and enter the password to see the leases.
+After each rebuild, reload the page. The container serves your checkout's
+`dist/` directly. (The port is 9092, so it can run alongside the
+cockpit-networkd container on 9091.)
 
-You can also use
-[watch mode](https://esbuild.github.io/api/#watch) to
-automatically update the bundle on every code change with
+The container has a fake LAN, bridge `kea0` (192.168.50.0/24 and
+fd00:50::/64), set up by `devel/fake-lan.sh`. Kea serves it with the configs
+in `devel/kea/`, using 2-minute lifetimes so renewals show up while you
+watch. Clients live in their own network namespaces and run busybox
+`udhcpc`/`udhcpc6`:
 
-    ./build.js -w
+| Client | MAC | What it does |
+|--------|-----|--------------|
+| c1 | 02:00:00:00:00:11 | "laptop": DHCPv4 with hostname, DHCPv6 address without one |
+| c2 | 02:00:00:00:00:12 | "phone": DHCPv4 only |
+| c3 | 02:00:00:00:00:13 | reserved "nas" with a description: v4 and v6 reservations, plus a delegated prefix |
+| c4 | changes | "visitor": takes a lease for a minute, releases it, comes back with a new MAC |
 
-or
+On first boot, it also seeds leases for devices that aren't on the LAN: a
+printer (reservation with a description), a TV (user context comment with
+an escaped comma, plus a v6 lease), and an orphaned delegated prefix.
 
-    make watch
+Other targets: `make devel-shell` (root shell in the container), `make
+devel-stop`, `make devel-image` (rebuild after changing `devel/`).
+`DEVEL_PORT=…` changes the port. `devel/bin/devel-container logs` follows
+the Kea and client journals.
 
-When developing against a virtual machine, watch mode can also automatically upload
-the code changes by setting the `RSYNC` environment variable to
-the remote hostname.
+The container needs `--privileged`. It is rootless, so this is limited to
+your own user account's privileges. systemd needs it, and so does creating
+the bridge and namespaces.
 
-    RSYNC=c make watch
+## Against a real server
 
-When developing against a remote host as a normal user, `RSYNC_DEVEL` can be
-set to upload code changes to `~/.local/share/cockpit/` instead of
-`/usr/local`.
+`RSYNC_DEVEL=server make watch` copies each build to `~/.local/share/cockpit/`
+on `server` over ssh. Remove it there with `rm -r ~/.local/share/cockpit/kea`.
 
-    RSYNC_DEVEL=example.com make watch
+## Installing
 
-To "uninstall" the locally installed version, run `make devel-uninstall`, or
-remove manually the symlink:
+### Debian / Ubuntu package
 
-    rm ~/.local/share/cockpit/starter-kit
+    make deb               # -> cockpit-kea_<version>_all.deb
+    scp cockpit-kea_*_all.deb server:
+    ssh server sudo apt install ./cockpit-kea_<version>_all.deb
 
-# Running eslint
+It installs to `/usr/share/cockpit/kea`, depends on `cockpit-bridge`, and
+recommends `kea-dhcp4-server | kea-dhcp6-server`. Remove it with `apt remove
+cockpit-kea`.
 
-Cockpit Starter Kit uses [ESLint](https://eslint.org/) to automatically check
-JavaScript/TypeScript code style in `.js[x]` and `.ts[x]` files.
+* The target always does a fresh production (minified, gzipped) build, so
+  `dist/` is left in production mode afterwards. Run `make` or `make watch`
+  before going back to the dev container.
+* The version comes from `git describe`, which gives `1` until there's a
+  tag. Tag releases (e.g. `git tag 0.1`) so upgrades get increasing versions.
+* `Maintainer` is filled in from your `git config user.name`/`user.email`
+  (override with `DEB_MAINTAINER=…`).
+* It uses `dpkg-deb` if installed, otherwise runs it in a `debian:trixie`
+  container with podman.
 
-eslint is executed as part of `test/static-code`, aka. `make codecheck`.
+Adapted from [cockpit-sensors](https://github.com/ocristopfer/cockpit-sensors)'
+Makefile. It's a plain `dpkg-deb` build, not a full `debian/` source package,
+which is fine for installing on your own machines.
 
-For developer convenience, the ESLint can be started explicitly by:
+### Other ways
 
-    npm run eslint
+`make install` installs to `/usr/local/share/cockpit/kea`
+(`PREFIX=/usr` for `/usr/share`). `make rpm` and `packaging/arch` come from
+the starter kit and are untested.
 
-Violations of some rules can be fixed automatically by:
+## Checks
 
-    npm run eslint:fix
-
-Rules configuration can be found in the `.eslintrc.json` file.
-
-## Running stylelint
-
-Cockpit uses [Stylelint](https://stylelint.io/) to automatically check CSS code
-style in `.css` and `scss` files.
-
-styleint is executed as part of `test/static-code`, aka. `make codecheck`.
-
-For developer convenience, the Stylelint can be started explicitly by:
-
+    npm run eslint         # or eslint:fix
     npm run stylelint
+    test/common/typecheck
 
-Violations of some rules can be fixed automatically by:
+`make codecheck` runs all of these. The VM-based integration tests from the
+starter kit (`make check`, `test/check-application`) need `/dev/kvm` and a
+Cockpit test image with Kea. They have not been run yet.
 
-    npm run stylelint:fix
+# Based on
 
-Rules configuration can be found in the `.stylelintrc.json` file.
-
-# Running tests locally
-
-Run `make check` to build an RPM, install it into a standard Cockpit test VM
-(centos-9-stream by default), and run the test/check-application integration test on
-it. This uses Cockpit's Chrome DevTools Protocol based browser tests, through a
-Python API abstraction. Note that this API is not guaranteed to be stable, so
-if you run into failures and don't want to adjust tests, consider checking out
-Cockpit's test/common from a tag instead of main (see the `test/common`
-target in `Makefile`).
-
-After the test VM is prepared, you can manually run the test without rebuilding
-the VM, possibly with extra options for tracing and halting on test failures
-(for interactive debugging):
-
-    TEST_OS=centos-9-stream test/check-application -tvs
-
-It is possible to setup the test environment without running the tests:
-
-    TEST_OS=centos-9-stream make prepare-check
-
-You can also run the test against a different Cockpit image, for example:
-
-    TEST_OS=fedora-40 make check
-
-# Running tests in CI
-
-Tests also run in [Packit](https://packit.dev/) for all currently supported
-Fedora releases; see the [packit.yaml](./packit.yaml) control file. You need to
-[enable Packit-as-a-service](https://packit.dev/docs/packit-service/) in your GitHub project to use this.
-To run the tests in the exact same way for upstream pull requests and for
-[Fedora package update gating](https://docs.fedoraproject.org/en-US/ci/), the
-tests are wrapped in the [FMF metadata format](https://github.com/teemtee/fmf)
-for using with the [tmt test management tool](https://docs.fedoraproject.org/en-US/ci/tmt/).
-Note that Packit tests can *not* run their own virtual machine images, thus
-they only run [@nondestructive tests](https://github.com/cockpit-project/cockpit/blob/main/test/common/testlib.py).
-
-# Customizing
-
-After cloning the Starter Kit you should rename the files, package names, and
-labels to your own project's name. Use these commands to find out what to
-change:
-
-    find -iname '*starter*'
-    git grep -i starter
-
-# Automated release
-
-Once your cloned project is ready for a release, you should consider automating
-that. The intention is that the only manual step for releasing a project is to create
-a signed tag for the version number, which includes a summary of the noteworthy
-changes:
-
-```
-123
-
-- this new feature
-- fix bug #123
-```
-
-Pushing the release tag triggers the [release.yml](.github/workflows/release.yml.disabled)
-[GitHub action](https://github.com/features/actions) workflow. This creates the
-official release tarball and publishes as upstream release to GitHub. The
-workflow is disabled by default -- to use it, edit the file as per the comment
-at the top, and rename it to just `*.yml`.
-
-The Fedora and COPR releases are done with [Packit](https://packit.dev/),
-see the [packit.yaml](./packit.yaml) control file.
-
-# Automated maintenance
-
-It is important to keep your [NPM modules](./package.json) up to date, to keep
-up with security updates and bug fixes. This happens with
-[dependabot](https://github.com/dependabot),
-see [configuration file](.github/dependabot.yml).
-
-# Further reading
-
- * The [Starter Kit announcement](https://cockpit-project.org/blog/cockpit-starter-kit.html)
-   blog post explains the rationale for this project.
- * [Cockpit Deployment and Developer documentation](https://cockpit-project.org/guide/latest/)
- * [Make your project easily discoverable](https://cockpit-project.org/blog/making-a-cockpit-application.html)
+[cockpit-project/starter-kit](https://github.com/cockpit-project/starter-kit).
+`pkg/lib` and `test/common` are fetched from Cockpit at the commit pinned in
+the `Makefile`.

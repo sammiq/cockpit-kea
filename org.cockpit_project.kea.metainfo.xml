@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>org.cockpit_project.kea</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>DHCP (ISC Kea)</name>
+  <summary>View ISC Kea DHCP leases and logs</summary>
+  <description>
+    <p>
+      A Cockpit page for hosts running the ISC Kea DHCP server. Shows the
+      current DHCPv4 and DHCPv6 leases in one table, and the logs of the
+      Kea services.
+    </p>
+  </description>
+  <extends>org.cockpit_project.cockpit</extends>
+  <launchable type="cockpit-manifest">kea</launchable>
+  <url type="homepage">https://github.com/sammiq/cockpit-kea</url>
+  <url type="bugtracker">https://github.com/sammiq/cockpit-kea/issues</url>
+</component>

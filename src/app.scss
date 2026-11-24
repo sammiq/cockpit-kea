@@ -1,6 +1,81 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 @use "page.scss";
+@use "ct-card";
 
-p {
-    font-weight: bold;
+#kea,
+#kea-lease-page {
+  .pf-v6-c-card {
+    @extend .ct-card;
+  }
+
+  .pf-v6-l-gallery {
+    --pf-v6-l-gallery--GridTemplateColumns: 1fr;
+  }
+
+  .cockpit-log-panel {
+    max-inline-size: 100vw;
+  }
+}
+
+.kea-subtle {
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.kea-address,
+.kea-mac {
+  font-family: var(--pf-t--global--font--family--mono);
+  white-space: nowrap;
+}
+
+.kea-alerts {
+  display: grid;
+  gap: var(--pf-t--global--spacer--sm);
+}
+
+.kea-code {
+  font-family: var(--pf-t--global--font--family--mono);
+  word-break: break-all;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+// Like the network interface page: address, then its type in subtle text
+.kea-lease-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--pf-t--global--spacer--md);
+
+  #kea-lease-type {
+    font-weight: normal;
+    color: var(--pf-t--global--text--color--subtle);
+  }
+}
+
+// The link button in the address column keeps the mono font
+.pf-v6-c-button.kea-address {
+  font-family: var(--pf-t--global--font--family--mono);
+}
+
+// Addresses, MACs, hostnames and times on one line; the description (4th
+// column) wraps. Below the md breakpoint the table becomes a grid, so leave
+// it be there.
+@media (width >= 768px) {
+  #kea-leases tbody > tr > :is(th, td):not(:nth-child(4)) {
+    white-space: nowrap;
+  }
+
+  // PatternFly truncates sortable header labels (the th gets max-width: 1px);
+  // make the whole label unshrinkable so it sets the column's minimum width
+  #kea-leases thead th {
+    max-inline-size: none;
+  }
+
+  #kea-leases thead :is(.pf-v6-c-table__button, .pf-v6-c-table__button-content, .pf-v6-c-table__text) {
+    min-inline-size: max-content;
+  }
+}
+
+.kea-nowrap {
+  white-space: nowrap;
 }

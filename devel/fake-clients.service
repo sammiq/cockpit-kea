@@ -1,0 +1,11 @@
+[Unit]
+Description=Fake DHCP clients for the Kea dev container
+Requires=fake-lan.service
+After=fake-lan.service kea-dhcp4-server.service kea-dhcp6-server.service
+
+[Service]
+ExecStart=/usr/local/bin/fake-lan.sh clients
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

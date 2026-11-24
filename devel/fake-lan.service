@@ -1,0 +1,13 @@
+[Unit]
+Description=Fake LAN for the Kea dev container (bridge kea0, seeded leases)
+DefaultDependencies=no
+Before=kea-dhcp4-server.service kea-dhcp6-server.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/fake-lan.sh setup
+
+[Install]
+WantedBy=multi-user.target

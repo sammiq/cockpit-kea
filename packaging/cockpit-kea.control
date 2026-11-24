@@ -1,0 +1,15 @@
+Package: cockpit-kea
+Version: VERSION
+Section: admin
+Priority: optional
+Architecture: all
+Depends: cockpit-bridge
+Recommends: kea-dhcp4-server | kea-dhcp6-server
+Maintainer: MAINTAINER
+Installed-Size: INSTALLED_SIZE
+Homepage: https://github.com/sammiq/cockpit-kea
+Description: Cockpit page for the ISC Kea DHCP server
+ Shows the ISC Kea DHCP server in the Cockpit web console: the current
+ DHCPv4 and DHCPv6 leases in one table (address, MAC address, hostname,
+ description, lease start and end), read from Kea's memfile lease files,
+ and the logs of the Kea services. Read-only.

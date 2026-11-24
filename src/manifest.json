@@ -3,9 +3,19 @@
         "cockpit": "137"
     },
 
-    "tools": {
+    "conditions": [
+        {"path-exists": "/etc/kea"}
+    ],
+
+    "menu": {
         "index": {
-            "label": "Starter Kit"
+            "label": "DHCP server",
+            "order": 45,
+            "keywords": [
+                {
+                    "matches": ["dhcp", "kea", "lease", "leases", "dhcpv4", "dhcpv6", "ipv4", "ipv6", "reservation"]
+                }
+            ]
         }
     }
 }

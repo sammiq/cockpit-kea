@@ -98,6 +98,7 @@ clean:
 	rm -f $(SPEC) packaging/arch/PKGBUILD
 	rm -f po/LINGUAS
 	rm -f metafile.json runtime-npm-modules.txt
+	rm -rf output $(RPM_NAME)_*.deb
 
 install: $(DIST_TEST) po/LINGUAS
 	mkdir -p $(DESTDIR)$(PREFIX)/share/cockpit/$(PACKAGE_NAME)
@@ -116,6 +117,23 @@ devel-install: $(DIST_TEST)
 # and removes it
 devel-uninstall:
 	rm -f ~/.local/share/cockpit/$(PACKAGE_NAME)
+
+# Development container with Kea DHCP + Cockpit (see devel/); serves
+# this checkout's dist/ at http://127.0.0.1:$(DEVEL_PORT)/kea
+DEVEL_PORT ?= 9092
+export DEVEL_PORT
+
+devel-image:
+	devel/bin/devel-container build
+
+devel-container: $(DIST_TEST)
+	devel/bin/devel-container start
+
+devel-stop:
+	devel/bin/devel-container stop
+
+devel-shell:
+	devel/bin/devel-container shell
 
 print-version:
 	@echo "$(VERSION)"
@@ -163,6 +181,31 @@ rpm: $(TARFILE) $(NODE_CACHE) $(SPEC)
 	rm -r "`pwd`/rpmbuild"
 	rm -r "`pwd`/output" "`pwd`/build"
 
+# Debian/Ubuntu package (adapted from cockpit-sensors' Makefile). Always
+# packages a fresh production build; dist/ is left in production mode
+# afterwards, so run `make` or `make watch` again for development.
+# Uses dpkg-deb from the host, or from a Debian container when there is none.
+DEB=$(RPM_NAME)_$(VERSION)_all.deb
+DEB_MAINTAINER ?= $(shell echo "$$(git config user.name) <$$(git config user.email)>")
+DPKG_DEB ?= $(shell command -v dpkg-deb || echo podman run --rm -v "$(CURDIR):/src:z" -w /src docker.io/library/debian:trixie dpkg-deb)
+
+deb: $(NODE_MODULES_TEST) $(COCKPIT_REPO_STAMP) packaging/$(RPM_NAME).control
+	NODE_ENV=production ./build.js
+	rm -rf output
+	mkdir -m 0755 -p output/$(RPM_NAME)/DEBIAN output/$(RPM_NAME)/usr/share/cockpit/$(PACKAGE_NAME) output/$(RPM_NAME)/usr/share/metainfo
+	cp -r dist/. output/$(RPM_NAME)/usr/share/cockpit/$(PACKAGE_NAME)/
+	find output/$(RPM_NAME)/usr/share/cockpit -name "*.map" -delete
+	cp $(APPSTREAMFILE) output/$(RPM_NAME)/usr/share/metainfo/
+	sed -e "s/^Version:.*/Version: $(VERSION)/" \
+	    -e "s|^Maintainer:.*|Maintainer: $(DEB_MAINTAINER)|" \
+	    -e "s/^Installed-Size:.*/Installed-Size: $$(du -sk --exclude=DEBIAN output/$(RPM_NAME) | cut -f1)/" \
+	    packaging/$(RPM_NAME).control > output/$(RPM_NAME)/DEBIAN/control
+	$(DPKG_DEB) --root-owner-group -Zxz --build output/$(RPM_NAME) $(DEB)
+	rm -rf output
+	# dist/ now holds the production build; make the next `make` redo a dev one
+	rm -f $(DIST_TEST)
+	@ls -1 $(DEB)
+
 # build a VM with locally built distro pkgs installed
 # disable networking, VM images have mock/pbuilder with the common build dependencies pre-installed
 $(VM_IMAGE): export XZ_OPT=-0
@@ -202,4 +245,4 @@ $(NODE_MODULES_TEST): package.json
 	for _ in `seq 3`; do timeout 10m env -u NODE_ENV npm install --ignore-scripts && exit 0; done; exit 1
 	env -u NODE_ENV npm prune
 
-.PHONY: all clean install devel-install devel-uninstall print-version dist node-cache rpm prepare-check check vm print-vm
+.PHONY: all clean install deb devel-install devel-uninstall devel-image devel-container devel-stop devel-shell print-version dist node-cache rpm prepare-check check vm print-vm
